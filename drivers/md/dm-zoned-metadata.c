@@ -95,6 +95,7 @@ struct dmz_map {
 	__le32			bzone_id;
 };
 
+
 /*
  * Chunk mapping table metadata: 512 8-bytes entries per 4KB block.
  */
@@ -114,6 +115,8 @@ struct dmz_mblock {
 	unsigned long		state;
 	struct page		*page;
 	void			*data;
+
+	__le32 			**hybrid_data;
 };
 
 /*
@@ -425,6 +428,9 @@ static struct dmz_mblock *dmz_alloc_mblock(struct dmz_metadata *zmd,
 
 	/* Allocate a new block */
 	mblk = kmalloc(sizeof(struct dmz_mblock), GFP_NOIO);
+
+	printk("sizeof(struct dmz_mblock) : %u", sizeof(struct dmz_mblock));
+
 	if (!mblk)
 		return NULL;
 
@@ -547,6 +553,7 @@ static struct dmz_mblock *dmz_get_mblock_slow(struct dmz_metadata *zmd,
 
 	/* Get a new block and a BIO to read it */
 	mblk = dmz_alloc_mblock(zmd, mblk_no);
+
 	if (!mblk)
 		return ERR_PTR(-ENOMEM);
 
@@ -584,7 +591,7 @@ static struct dmz_mblock *dmz_get_mblock_slow(struct dmz_metadata *zmd,
 	bio_set_op_attrs(bio, REQ_OP_READ, REQ_META | REQ_PRIO);
 	bio_add_page(bio, mblk->page, DMZ_BLOCK_SIZE, 0);
 	submit_bio(bio);
-
+	
 	return mblk;
 }
 
@@ -1705,6 +1712,9 @@ static int dmz_load_mapping(struct dmz_metadata *zmd)
 	unsigned int dzone_id;
 	unsigned int bzone_id;
 
+	// initialize hybrid map
+	int x, y, nr_blocks = 32768;
+	
 	/* Metadata block array for the chunk mapping table */
 	zmd->map_mblk = kcalloc(zmd->nr_map_blocks,
 				sizeof(struct dmz_mblk *), GFP_KERNEL);
@@ -1720,6 +1730,43 @@ static int dmz_load_mapping(struct dmz_metadata *zmd)
 				return PTR_ERR(dmap_mblk);
 			zmd->map_mblk[i] = dmap_mblk;
 			dmap = (struct dmz_map *) dmap_mblk->data;
+			
+			dmap_mblk->hybrid_data = vmalloc((zmd->nr_chunks+1) * sizeof(__le32 *));
+			if(dmap_mblk->hybrid_data == NULL){
+				printk("hybrid_data memory address : %p, hybrid_data size : %lu", dmap_mblk->hybrid_data, sizeof(dmap_mblk->hybrid_data));
+				return -ENOMEM;
+			}
+			printk("hybrid_data memory address : %p, hybrid_data size : %lu", dmap_mblk->hybrid_data, sizeof(dmap_mblk->hybrid_data));
+
+			for(x = 0; x < zmd->nr_chunks+1; x++){
+				dmap_mblk->hybrid_data[x] = vmalloc(nr_blocks * sizeof(__le32));
+				if(!dmap_mblk->hybrid_data[x]){
+					printk("Failed to allocate memory in chunk[%d]", x);
+					for(y = 0; y < x; y++){
+						vfree(dmap_mblk->hybrid_data[y]);
+					}
+					vfree(dmap_mblk->hybrid_data);
+					return -ENOMEM;
+
+				}
+			}
+
+			for(x = 0; x < zmd->nr_chunks+1; x++){
+				for(y = 0; y < nr_blocks; y++){
+					dmap_mblk->hybrid_data[x][y] = DMZ_MAP_UNMAPPED;
+				}
+				printk("hybrid_data[%d][0]/[32767] : %u/%u", x, dmap_mblk->hybrid_data[x][0], dmap_mblk->hybrid_data[x][32767]);
+			}
+
+
+	/*		if(dmap_mblk->hybrid_data != NULL){
+				printk("hybrid_data memory address : %p, hybrid_data size : %lu", dmap_mblk->hybrid_data, sizeof(dmap_mblk->hybrid_data));
+				for(x = 0; x < hybrid_size; x++){
+					dmap_mblk->hybrid_data[x] = 1;
+				}
+			}
+	*/
+
 			i++;
 			e = 0;
 		}
@@ -2068,6 +2115,8 @@ struct dm_zone *dmz_get_chunk_mapping(struct dmz_metadata *zmd, unsigned int chu
 	struct dm_zone *dzone = NULL;
 	int ret = 0;
 	int alloc_flags = zmd->nr_cache ? DMZ_ALLOC_CACHE : DMZ_ALLOC_RND;
+
+	printk("(get_chunk_mapping)hybrid_data memory address : %p", dmap_mblk->hybrid_data);
 
 	dmz_lock_map(zmd);
 again:
@@ -2592,7 +2641,8 @@ int dmz_invalidate_blocks(struct dmz_metadata *zmd, struct dm_zone *zone,
 		/* Clear bits */
 		bit = chunk_block & DMZ_BLOCK_MASK_BITS;
 		nr_bits = min(nr_blocks, zmd->zone_bits_per_mblk - bit);
-
+		
+		printk("(invalidate_blocks)mblk->data: %p", mblk->data);
 		count = dmz_clear_bits((unsigned long *)mblk->data,
 				       bit, nr_bits);
 		if (count) {
