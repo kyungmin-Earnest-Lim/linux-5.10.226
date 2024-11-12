@@ -1450,7 +1450,7 @@ static int dmz_emulate_zones(struct dmz_metadata *zmd, struct dmz_dev *dev)
 	sector_t zone_offset = 0;
 	
 	int i, j;
-	printk("here emulate_zones");
+
 	for(idx = 0; idx < dev->nr_zones; idx++) {
 		struct dm_zone *zone;
 
@@ -1468,7 +1468,7 @@ static int dmz_emulate_zones(struct dmz_metadata *zmd, struct dmz_dev *dev)
 			printk("cc_mapping table: %p, size: %lu", zone->cc_mapping, sizeof(zone->cc_mapping));
 
 			for(i = 0; i < 4; i++) {
-				zone->cc_mapping[i] = vmalloc(32768 & sizeof(__le32));
+				zone->cc_mapping[i] = vmalloc(32768 * sizeof(__le32));
 				if(zone->cc_mapping[i] == NULL) {
 					printk("failed to allocate memory");
 					for(j = 0; j < i; j++) {
@@ -1478,19 +1478,17 @@ static int dmz_emulate_zones(struct dmz_metadata *zmd, struct dmz_dev *dev)
 					return -ENOMEM;
 				}
 				printk("cc_mapping table[%d]: %p, size: %lu", 
-								i, zone->cc_mapping, sizeof(zone->cc_mapping));
+								i, zone->cc_mapping[i], sizeof(zone->cc_mapping));
 
 			}
 
-		}
-
-		for(i = 0; i < 4; i++) {
-			for(j = 0; j < 32768; j++) {
-				zone->cc_mapping[i][j] = DMZ_MAP_UNMAPPED;
+			for(i = 0; i < 4; i++) {
+				for(j = 0; j < 32768; j++) {
+					zone->cc_mapping[i][j] = DMZ_MAP_UNMAPPED;
+				}
+				printk("cc_mapping[%d][0]/[32767] : %u/%u", i, zone->cc_mapping[i][0], zone->cc_mapping[i][32767]);
 			}
-			printk("cc_mapping[%d][0]/[32767] : %u/%u", i, zone->cc_mapping[i][0], zone->cc_mapping[i][32767]);
 		}
-		
 		// finish 
 
 		set_bit(DMZ_CACHE, &zone->flags);
